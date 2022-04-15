@@ -1,0 +1,182 @@
+//===========================================================================================
+// 
+//  Author          : Alexander van Monsjou
+// 
+//  File            : SimuCashAcos3ReadWrite.cpp
+// 
+//  Copyright (C)   : SimuCash
+// 
+//  Description     : Contains Methods and Properties of ACOS3 Record related operations
+// 
+//  Date            : January 7, 2022
+// 
+//  Revision Traile : [Author] / [Date of modification] / [Details of Modifications done]
+// 
+//=========================================================================================
+
+#include "stdafx.h"
+#include "Acos3.h"
+#include "CardException.h"
+
+void Acos3::writeRecord(byte uRecordNumber,
+	byte uOffset,
+	byte* pDataToWrite,
+	byte uDataLength)
+{
+	Apdu* pApdu = new Apdu();
+	byte aCommand[5] = { 0x80, 0xD2, uRecordNumber, uOffset, uDataLength };
+	byte aResponse[2];
+	byte aStatusWord[2];
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pDataToWrite == NULL || uDataLength == 0)
+		throw CardException("Data to write is not specified");
+
+	if (pApdu == NULL)
+		throw CardException("Unable to Allocate New ADPU");
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(pDataToWrite);
+	pApdu->setSendLen(uDataLength + 5);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setStatusWord(aResponse);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x67 && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		throw CardException("Specified Length plus Offset is larger than file length.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x81)
+	{
+		delete pApdu;
+		throw CardException("Command incompatible with file structure.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x82)
+	{
+		delete pApdu;
+		throw CardException("Security status not satisfied - Secret code not submitted.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+	{
+		delete pApdu;
+		throw CardException("No file selected.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x6A && aStatusWord[1] == 0x83)
+	{
+		delete pApdu;
+		throw CardException("Record not found - file too short.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x6F && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		throw CardException("I/O error; data to be accessed resides in invalid address.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::readRecord(byte uRecordNumber,
+	byte uOffset,
+	byte *pReadBuffer,
+	byte uLengthToRead)
+{
+	Apdu* pApdu = new Apdu();
+	byte * pResponse = new byte[uLengthToRead + 2];
+	byte aCommand[5] = { 0x80, 0xB2, uRecordNumber, uOffset, uLengthToRead };
+	byte aStatusWord[2];
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pApdu == NULL)
+		throw CardException("Unable to Allocate New ADPU");
+
+	if (pResponse == NULL)
+	{
+		delete pApdu;
+		throw CardException("Unable to Allocate New Read Buffer");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(NULL);
+	pApdu->setSendLen(5);
+	pApdu->setReceiveLen(uLengthToRead + 2);
+	pApdu->setReceiveData(pResponse);
+	pApdu->setStatusWord(pResponse + uLengthToRead);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		memcpy(pReadBuffer, pApdu->getReceiveData(), uLengthToRead);
+
+		delete pApdu;
+		delete[] pResponse;
+		return;
+	}
+	else if (aStatusWord[0] == 0x67 && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Specified Length plus Offset is larger than file length.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x81)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Command incompatible with file structure.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x82)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Security status not satisfied - Secret code not submitted.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("No file selected.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x6A && aStatusWord[1] == 0x83)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Record not found - file too short.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x6F && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("I/O error; data to be accessed resides in invalid address.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}

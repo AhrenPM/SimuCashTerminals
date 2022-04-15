@@ -1,0 +1,665 @@
+//===========================================================================================
+// 
+//  Author          : Alexander van Monsjou
+// 
+//  File            : SimuCashAcos3.cpp
+// 
+//  Copyright (C)   : SimuCash Implementation
+// 
+//  Description     : Contains Methods and Properties of ACOS3
+// 
+//  Date            : January 7, 2022
+// 
+//  Revision Traile : [Author] / [Date of modification] / [Details of Modifications done]
+// 
+//=========================================================================================
+
+
+#include "stdafx.h"
+#include "Acos3.h"
+#include "Apdu.h"
+#include "CardException.h"
+#include "PcscException.h"
+#include "AcsReader.h"
+
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+Acos3::Acos3()
+{
+	pReader_ = NULL;
+	pApdu_ = NULL;
+}
+
+Acos3::Acos3(AcsReader * pReader)
+{
+	setReader(pReader);
+}
+
+//////////////////////////////////////////////////////////////////////
+// Implementation of accessor functions
+//////////////////////////////////////////////////////////////////////
+void Acos3::setReader(AcsReader * pReader)
+{
+	pReader_ = pReader;
+}
+
+//////////////////////////////////////////////////////////////////////
+// Implementation of other member functions
+//////////////////////////////////////////////////////////////////////
+
+void Acos3::clearCard()
+{
+	byte aResponse[2];
+	byte aCommand[5] = { 0x80, 0x30, 0x00, 0x00, 0x00 };
+	byte aStatusWord[2];
+	Apdu* pApdu = new Apdu();
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendLen(0x05);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x82)
+	{
+		delete pApdu;
+		throw CardException("IC code not satisfied or card is in user state.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::submitCode(CODE_TYPE eCodeType, ACOS3_CODE eCode)
+{
+	byte aResponse[2];
+	byte aStatusWord[2];
+	byte aCommand[5] = { 0x80, 0x20, (byte)eCodeType, 0x00, 0x08 };
+	char aErrorMessage[100];
+	Apdu* pApdu = new Apdu();
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (eCode == NULL)
+		throw CardException("Code has invalid length. Code should be 8 bytes long");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(eCode);
+	pApdu->setSendLen(0x0D);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x63)
+	{
+		sprintf(aErrorMessage, "Wrong Code. %02X retries left.", aStatusWord[1] & 0x0F);
+
+		delete pApdu;
+		throw CardException(aErrorMessage, aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x83)
+	{
+		delete pApdu;
+		throw CardException("The specified Code is locked.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+	{
+		delete pApdu;
+		throw CardException("Mutual Authentication not successfully completed prior to the Submit Code command.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::changePin(byte* pNewPin)
+{
+	byte aResponse[2];
+	byte aCommand[5] = { 0x80, 0x24, 0x00, 0x00, 0x08 };
+	byte aStatusWord[2];
+	Apdu* pApdu = new Apdu();
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pNewPin == NULL)
+		throw CardException("PIN has invalid length. PIN should be 8 bytes long");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(pNewPin);
+	pApdu->setSendLen(0x0D);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x82)
+	{
+		delete pApdu;
+		throw CardException("PIN not submitted prior to issuing this command.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+	{
+		delete pApdu;
+		throw CardException("Mutual Authentication not completed immediately prior to this command.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x66)
+	{
+		delete pApdu;
+		throw CardException("Command not available; option bit not set.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::selectFile(INTERNAL_FILE eInternalFile)
+{
+	byte aFileId[2];
+	byte aTemporaryFileId[3];
+
+	switch (eInternalFile)
+	{
+	case MCUID_FILE:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x00;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case MANUFACTURER:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x01;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case PERSONALIZATION:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x02;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case SECURITY_FILE:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x03;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case USER_FILE_MGMT_FILE:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x04;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case ACCOUNT_FILE:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x05;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case ACCOUNT_SECURITY:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x06;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	case ATR:
+	{
+		aTemporaryFileId[0] = 0xFF;
+		aTemporaryFileId[1] = 0x07;
+		memcpy(aFileId, aTemporaryFileId, 2);
+		break;
+	}
+	default: throw CardException("Invalid Internal File");
+	}
+	selectFile(aFileId);
+}
+
+void Acos3::selectFile(byte* pFileID)
+{
+	byte aStatusWord[2];
+	byte aResponse[2];
+	byte aCommand[5] = { 0x80, 0xA4, 0x00, 0x00, 0x02 };
+	Apdu* pApdu = new Apdu();
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pFileID == NULL)
+		throw CardException("File ID length is invalid. File ID length should be 2 bytes");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(pFileID);
+	pApdu->setSendLen(2 + 5);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse);
+
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90 || aStatusWord[0] == 0x91)
+	{
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x6A && aStatusWord[1] == 0x82)
+	{
+		delete pApdu;
+		throw CardException("File does not exist.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::getResponse(byte uLengthToReceive,
+	byte *pCardResponse)
+{
+	byte aCommand[5] = { 0x80, 0xC0, 0x00, 0x00, uLengthToReceive };
+	byte aStatusWord[2];
+	byte* pResponse;
+	char aErrorMessage[100];
+	Apdu* pApdu = new Apdu();
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	pResponse = new byte[uLengthToReceive + 2];
+	if (pResponse == NULL)
+	{
+		delete pApdu;
+		throw CardException("Unable to Allocate New Read Buffer");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(NULL);
+	pApdu->setSendLen(5);
+	pApdu->setReceiveLen(uLengthToReceive + 2);
+	pApdu->setReceiveData(pResponse);
+	pApdu->setStatusWord(pResponse + uLengthToReceive);
+
+	try
+	{
+		pReader_->sendApduCommand(pApdu);
+
+		memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+		if (aStatusWord[0] == 0x90 && aStatusWord[1] == 0x00)
+		{
+			memcpy(pCardResponse, pApdu->getReceiveData(), uLengthToReceive);
+
+			delete pApdu;
+			delete[] pResponse;
+			return;
+		}
+		else if (aStatusWord[0] == 0x6C)
+		{
+			sprintf(aErrorMessage, "Wrong expected data length - issue command again with P3 =  %02X.", aStatusWord[1] & 0x0F);
+
+			delete pApdu;
+			delete[] pResponse;
+			throw CardException(aErrorMessage, aStatusWord);
+		}
+		else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+		{
+			delete pApdu;
+			delete[] pResponse;
+			throw CardException("No data available.", aStatusWord);
+		}
+		else if (aStatusWord[0] == 0x62 && aStatusWord[1] == 0x81)
+		{
+			delete pApdu;
+			delete[] pResponse;
+			throw CardException("Part of the data may be corrupted.", aStatusWord);
+		}
+		else
+		{
+			pErrorMessage = getErrorMessage(aStatusWord);
+
+			delete pApdu;
+			delete[] pResponse;
+			throw CardException(pErrorMessage, aStatusWord);
+		}
+	}
+	catch (PcscException cException)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw cException;
+	}
+}
+
+
+
+byte* Acos3::getCardInfo(CARD_INFO_TYPE eCardInfoType)
+{
+	byte uLengthToReceive = 0;
+	byte * pResponse;
+	byte aStatusWord[2];
+	Apdu* pApdu = new Apdu();
+	byte aCommand[5] = { 0x80, 0x14, 0x00, 0x00, 0x00 };
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pApdu == NULL)
+	{
+		throw CardException("Unable to Allocate New ADPU");
+	}
+
+	switch (eCardInfoType)
+	{
+	case CARD_SERIAL:
+	{
+		aCommand[2] = 0x00;
+		aCommand[4] = 0x08;
+		uLengthToReceive = 0x08;
+		break;
+	}
+	case EEPROM:
+	{
+		aCommand[2] = 0x05;
+		aCommand[4] = 0x00;
+		uLengthToReceive = 0x00;
+		break;
+	}
+	case VERSION_NUMBER:
+	{
+		aCommand[2] = 0x06;
+		aCommand[4] = 0x08;
+		uLengthToReceive = 0x08;
+		break;
+	}
+	default: throw CardException("Invalid card information type");
+	}
+
+	pResponse = new byte[uLengthToReceive + 2];
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(NULL);
+	pApdu->setSendLen(0x05);
+	pApdu->setReceiveLen(uLengthToReceive + 0x02);
+	pApdu->setReceiveData(pResponse);
+	pApdu->setStatusWord(aStatusWord);
+
+	pReader_->sendApduCommand(pApdu);
+
+	if (pApdu->getReceiveLen() > 1)
+	{
+		memcpy(aStatusWord, pApdu->getReceiveData() + (pApdu->getReceiveLen() - (int)sizeof(aStatusWord)), sizeof(aStatusWord));
+	}
+
+	if (aStatusWord[0] == 0x67 && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Wrong P3", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x6F && aStatusWord[1] == 0x00)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("P1 or P2 is invalid.", aStatusWord);
+	}
+	else if (aStatusWord[0] == 0x90)
+	{
+		switch (eCardInfoType)
+		{
+		case CARD_SERIAL:
+		case VERSION_NUMBER:
+		{
+			return pApdu->getReceiveData();
+		}
+		case EEPROM:
+		{
+			return pApdu->getStatusWord();
+		}
+		default: throw CardException("Invalid card information type");
+		}
+	}
+	else
+		throw CardException(getErrorMessage(pApdu->getStatusWord()), pApdu->getStatusWord());
+}
+
+int8 * Acos3::getErrorMessage(byte* pStatusWord)
+{
+	static char aRetries[255];
+	static char aStatus[100];
+
+	if (pStatusWord == NULL)
+		return "Unknow Status Word (statusWord)";
+
+	else if (pStatusWord[0] == 0x62 && pStatusWord[1] == 0x81)
+		return "Data returned in response to the Inquire Account command may be incorrect due to corrupted data in the Account Data Structure.";
+
+	else if (pStatusWord[0] == 0x63)
+	{
+		sprintf(aRetries, "Security related command failed - External Authentication failed; incorrect Secret Code submiited; incorrect key used in Credit MAC generation. %02X  retries left.", pStatusWord[1] & 0x0F);
+		return aRetries;
+	}
+
+	else if (pStatusWord[0] == 0x67 && pStatusWord[1] == 0x00)
+		return "Wrong P3.";
+
+	else if (pStatusWord[0] == 0x68 && pStatusWord[1] == 0x82)
+		return "Secure Messaging not allowed.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x66)
+		return "Command not available.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x81)
+		return "Command incompatible with file structure.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x83)
+		return "Key or Secret Code is locked - no more verification or submission is possible.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x85)
+		return "Conditions of use not satisfied.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x87)
+		return "Expected Secure Messaging Data Objects missing.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0x88)
+		return "The Secure Messaging MAC does not match the data.";
+
+	else if (pStatusWord[0] == 0x69 && pStatusWord[1] == 0xF0)
+		return "Account data inconsistent/transaction interrupted - access to account only in priviledged mode possible.";
+
+	else if (pStatusWord[0] == 0x6A && pStatusWord[1] == 0x82)
+		return "File does not exist; account not available.";
+
+	else if (pStatusWord[0] == 0x6A && pStatusWord[1] == 0x83)
+		return "Record not found - file too short.";
+
+	else if (pStatusWord[0] == 0x6A && pStatusWord[1] == 0x86)
+		return "P1-P2 is incorrect.";
+
+	else if (pStatusWord[0] == 0x6B && pStatusWord[1] == 0x20)
+		return "Invalid amount in Credit/Debit command.";
+
+	else if (pStatusWord[0] == 0x6D && pStatusWord[1] == 0x00)
+		return "Unknown INS";
+
+	else if (pStatusWord[0] == 0x6E && pStatusWord[1] == 0x00)
+		return "Invalid CLA";
+
+	else if (pStatusWord[0] == 0x6F && pStatusWord[1] == 0x00)
+		return "I/O error; data to be accessed resides in invalid address";
+
+	else
+		return "Unknown Status Word";
+
+}
+
+//helper class
+
+void Acos3::configurePersonalizationFile(OptionRegister* pOptionRegister, SecurityOptionRegister* pSecurityRegister, byte uNumberOfFiles)
+{
+	byte aData[5];
+	selectFile(PERSONALIZATION);
+
+	aData[0] = pOptionRegister->getRawValue();
+	aData[1] = pSecurityRegister->getRawValue();
+	aData[3] = uNumberOfFiles;
+	aData[4] = 0x00;
+
+	writeRecord(0x00, 0x00, aData, 4);
+}
+
+void Acos3::createRecordFile(byte uRecordNumber, byte* pFileId, byte uNumberOfRecords, byte uRecordLength,
+	SecurityAttribute* pWriteSecurityAttribute, SecurityAttribute* pReadSecurityAttribute,
+	bool bReadRequireSecureMessaging, bool bWriteRequireSecureMessaging)
+{
+	byte aBuffer[7];
+
+	aBuffer[0] = uRecordLength;
+	aBuffer[1] = uNumberOfRecords;
+	aBuffer[2] = pReadSecurityAttribute->getRawValue();
+	aBuffer[3] = pWriteSecurityAttribute->getRawValue();
+	aBuffer[4] = pFileId[0];
+	aBuffer[5] = pFileId[1];
+
+
+	if (bReadRequireSecureMessaging)
+		aBuffer[6] |= 0x40;
+
+	if (bWriteRequireSecureMessaging)
+		aBuffer[6] |= 0x20;
+
+	writeRecord(uRecordNumber, 0, aBuffer, 7);
+}
+
+void Acos3::submitAppCodes(CODE_TYPE eCodeToSubmit, byte *pCode, byte * pResponse)
+{
+	Apdu* pApdu = new Apdu();
+	byte aResponse[2];
+	byte aCommand[5] = { 0x80, 0x20, (byte)eCodeToSubmit, 0x00, 0x08 };
+
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pCode == NULL || pResponse == NULL)
+		throw CardException("Code has invalid length. Code should be 8 bytes long");
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(pCode);
+	pApdu->setSendLen(0x0D);
+	pApdu->setReceiveLen(0x02);
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse);
+
+	try
+	{
+		pReader_->sendApduCommand(pApdu);
+	}
+	catch (PcscException pcscException)
+	{
+		delete pApdu;
+		throw pcscException;
+	}
+
+	memcpy(pResponse, pApdu->getStatusWord(), 2);
+	delete pApdu;
+
+}
+
+void Acos3::Acos3Des(BYTE *pData, BYTE *pKey, int iEncrypt)
+{
+	Des(pData, pKey, iEncrypt);
+}
+
+void Acos3::Acos3Des3(BYTE *pData, BYTE *pKey, int iEncrypt)
+{
+	Des3(pData, pKey, iEncrypt);
+}
+
+

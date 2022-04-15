@@ -1,0 +1,156 @@
+//===========================================================================================
+// 
+//  Author          : Alexander van Monsjou
+// 
+//  File            : SimuCashAcos3MutualAuthentication.cpp
+// 
+//  Copyright (C)   : SimuCash
+// 
+//  Description     : Contains Methods and Properties of ACOS3 Mutual Authentication operations
+// 
+//  Date            : January 7, 2022
+// 
+//  Revision Traile : [Author] / [Date of modification] / [Details of Modifications done]
+// 
+//=========================================================================================
+
+#include "stdafx.h"
+#include "Acos3.h"
+#include "Apdu.h"
+#include "CardException.h"
+
+
+void Acos3::startSession(byte *pBuffer)
+{
+	Apdu* pApdu = new Apdu();
+	byte * pResponse = new byte[0x0A];
+	byte aCommand[5] = { 0x80, 0x84, 0x00, 0x00, 0x08 };
+	byte aStatusWord[2];
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pApdu == NULL)
+		throw CardException("Unable to Allocate New ADPU");
+
+	if (pResponse == NULL)
+	{
+		delete pApdu;
+		throw CardException("Unable to Allocate New Read Buffer");
+	}
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(NULL);
+	pApdu->setSendLen(5);
+	pApdu->setReceiveLen(0x0A);
+	pApdu->setReceiveData(pResponse);
+	pApdu->setStatusWord(pResponse + 0x08);
+
+	pReader_->sendApduCommand(pApdu);
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (aStatusWord[0] == 0x90)
+	{
+		memcpy(pBuffer, pApdu->getReceiveData(), 0x08);;
+
+		delete pApdu;
+		delete[] pResponse;
+		return;
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x83)
+	{
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException("Terminal Authentication Key KT is locked, authentication process cannot be executed.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		delete[] pResponse;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
+
+void Acos3::authenticate(byte * pEncryptedCardRandomNumber,
+	byte * pTerminalRandomNumber,
+	byte * pEncryptedRandomTerminalNumber)
+{
+	Apdu* pApdu = new Apdu();
+	byte* pCardResponse;
+	byte aResponse[30];
+	byte aCommand[5] = { 0x80, 0x82, 0x00, 0x00, 0x10 };
+	byte aStatusWord[2];
+	byte aData[16];
+	char * pErrorMessage;
+
+	if (pReader_ == NULL)
+		throw CardException("Connection is not yet established");
+
+	if (pReader_ == NULL)
+		throw CardException("Invalid Parmeters");
+
+	if (pApdu == NULL)
+		throw CardException("Insufficient");
+
+	pApdu->setCommand(aCommand);
+
+	memcpy(aData, pEncryptedCardRandomNumber, 8);
+	memcpy(aData + 8, pTerminalRandomNumber, 8);
+
+	pApdu->setCommand(aCommand);
+	pApdu->setSendData(aData);
+	pApdu->setSendLen(sizeof(aData) + 5);
+	pApdu->setReceiveLen(sizeof(aResponse));
+	pApdu->setReceiveData(aResponse);
+	pApdu->setStatusWord(aResponse + 0x08);
+
+	pReader_->sendApduCommand(pApdu);
+
+	if (pApdu->getReceiveLen() == 2)
+	{
+		pApdu->setStatusWord(aResponse);
+	}
+
+	memcpy(aStatusWord, pApdu->getStatusWord(), 2);
+
+	if (pApdu->getReceiveLen() == 2)
+	{
+		pApdu->setStatusWord(aResponse);
+	}
+
+	if (aStatusWord[0] == 0x61)
+	{
+		delete pApdu;
+
+		pCardResponse = new byte[8];
+
+		getResponse(aStatusWord[1], pCardResponse);
+		memcpy(pEncryptedRandomTerminalNumber, pCardResponse, 8);
+
+		delete[] pCardResponse;
+		return;
+	}
+	else if (aStatusWord[0] == 0x90)
+	{
+		memcpy(pEncryptedRandomTerminalNumber, pApdu->getReceiveData(), 8);
+
+		delete pApdu;
+		return;
+	}
+	else if (aStatusWord[0] == 0x69 && aStatusWord[1] == 0x85)
+	{
+		delete pApdu;
+		throw CardException("Start Session not executed immediately before Authenticate command.", aStatusWord);
+	}
+	else
+	{
+		pErrorMessage = getErrorMessage(aStatusWord);
+
+		delete pApdu;
+		throw CardException(pErrorMessage, aStatusWord);
+	}
+}
